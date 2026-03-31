@@ -1,0 +1,47 @@
+name: auto-migrate
+
+on:
+  workflow_dispatch:
+    inputs:
+      formula_name:
+        description: 'Target Formula'
+        required: true
+
+jobs:
+  auto-migrate:
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: swr.cn-north-4.myhuaweicloud.com/harmonybrew/ci-runner:latest
+      volumes:
+        - /opt/node24:/__e/node24:rw,rshared
+    steps:
+      - name: Setup Node
+        run: |
+          curl -L -O https://github.com/hqzing/ohos-node/releases/download/v24.2.0/node-v24.2.0-openharmony-arm64.tar.gz
+          mkdir /__e/node24/bin
+          tar -zxf node-v24.2.0-openharmony-arm64.tar.gz -C /opt
+          ln -s /opt/node-v24.2.0-openharmony-arm64/bin/node /__e/node24/bin/node
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build And Push
+        id: build_task
+        env:
+          GITCODE_USER: ${{ vars.GITCODE_USER }}
+          GITCODE_EMAIL: ${{ vars.GITCODE_EMAIL }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          ./build-and-push.sh "${{ github.event.inputs.formula_name }}"
+          BRANCH=$(cat output.txt | grep "MIGRATION_BRANCH=" | cut -d'=' -f2)
+          MSG=$(cat output.txt | grep "MIGRATION_MSG=" | cut -d'=' -f2)
+          echo "BRANCH_NAME=$BRANCH" >> $GITHUB_ENV
+          echo "COMMIT_MSG=$MSG" >> $GITHUB_ENV
+
+      - name: Submit Pull Request
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          COMMIT_MSG: ${{ env.COMMIT_MSG }}
+        run: |
+          # 传入格式：用户名:分支名
+          python3 create-gitcode-pr.py "${{ github.event.inputs.formula_name }}" "${{ vars.GITCODE_USER }}:${{ env.BRANCH_NAME }}"

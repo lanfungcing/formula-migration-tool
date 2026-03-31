@@ -1,0 +1,28 @@
+name: check-migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      formula_name:
+        description: 'Target Formula'
+        required: true
+
+jobs:
+  check-migration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Run Dependency Analysis
+        run: python3 check-migration.py "${{ github.event.inputs.formula_name }}"
