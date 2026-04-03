@@ -4,10 +4,10 @@ import requests, json, sys
 UPSTREAM_API = "https://formulae.brew.sh/api/formula.jws.json"
 DOWNSTREAM_API = "https://harmonybrew.atomgit.com/api/formula.jws.json"
 
-# 全局缓存
-UPSTREAM_MAP = {}
+# 全局数据
+UPSTREAM_MAP = {}    # 真实名称 -> 详细信息
+ALIAS_MAP = {}       # 别名 -> 真实名称
 DOWNSTREAM_NAMES = set()
-# 全局已完全展开记录
 FULLY_EXPANDED = set()
 
 def fetch_api(url):
@@ -15,71 +15,91 @@ def fetch_api(url):
         print(f"[*] downloading: {url}")
         resp = requests.get(url, timeout=15)
         resp.raise_for_status()
-        payload = json.loads(resp.json().get("payload", "[]"))
-        return {item["name"]: item for item in payload}
+        # 处理 JWS 格式中的 payload
+        data = resp.json()
+        payload_str = data.get("payload", "[]")
+        payload = json.loads(payload_str)
+        return payload
     except Exception as e:
         print(f"[!] error: {e}")
-        return {}
+        return []
+
+def build_maps():
+    global UPSTREAM_MAP, ALIAS_MAP, DOWNSTREAM_NAMES
+
+    # 获取上游数据并构建别名映射
+    upstream_data = fetch_api(UPSTREAM_API)
+    for item in upstream_data:
+        real_name = item["name"]
+        UPSTREAM_MAP[real_name] = item
+        # 记录所有别名指向 real_name
+        for alias in item.get("aliases", []):
+            ALIAS_MAP[alias] = real_name
+
+    # 获取下游数据
+    downstream_data = fetch_api(DOWNSTREAM_API)
+    DOWNSTREAM_NAMES = {item["name"] for item in downstream_data}
+
+def resolve_name(name):
+    """将别名转换为真实名称，如果不是别名则返回原名"""
+    return ALIAS_MAP.get(name, name)
 
 def get_linux_deps(formula_info):
     deps = set()
-    
-    # 基础依赖
     deps.update(formula_info.get("dependencies", []))
     deps.update(formula_info.get("build_dependencies", []))
 
-    # ARM64 Linux 特定变体依赖
     variations = formula_info.get("variations", {})
-    arm_linux = variations.get("arm64_linux", {}) or variations.get("x86_64_linux", {})
-    
-    if arm_linux:
-        deps.update(arm_linux.get("dependencies", []))
-        deps.update(arm_linux.get("build_dependencies", []))
+    # 优先检查 linux 变体
+    linux_var = variations.get("arm64_linux") or variations.get("x86_64_linux")
+    if linux_var:
+        deps.update(linux_var.get("dependencies", []))
+        deps.update(linux_var.get("build_dependencies", []))
 
-    # macOS 库在 Linux 下通常也是依赖
     for item in formula_info.get("uses_from_macos", []):
         deps.add(item if isinstance(item, str) else list(item.keys())[0])
 
     return sorted([d for d in deps if d])
 
-def analyze_deps(name, prefix="", is_last=True, current_path=None):
+def analyze_deps(display_name, prefix="", is_last=True, current_path=None):
     if current_path is None:
         current_path = set()
 
+    # 核心逻辑：立即解析真实名称
+    real_name = resolve_name(display_name)
     connector = "└── " if is_last else "├── "
     
-    # 1. 检查是否存在于上游
-    in_up = name in UPSTREAM_MAP
-    
-    # 状态判定
+    # 判定状态
+    in_up = real_name in UPSTREAM_MAP
     if not in_up:
         status = "⚠️  [NOT_FOUND]"
     else:
-        status = "✅ [MIGRATED]" if name in DOWNSTREAM_NAMES else "❌ [NOT_MIGRATED]"
+        status = "✅ [MIGRATED]" if real_name in DOWNSTREAM_NAMES else "❌ [NOT_MIGRATED]"
 
-    # 2. 检查循环依赖
-    if name in current_path:
-        print(f"{prefix}{connector}{name:<25} {status} (🔄 Cycle)")
+    # 构造显示字符串（如果是别名，显示 alias -> real_name）
+    label = display_name
+    if display_name != real_name:
+        label = f"{display_name} -> {real_name}"
+
+    # 检查循环依赖
+    if real_name in current_path:
+        print(f"{prefix}{connector}{label:<30} {status} (🔄 Cycle)")
         return
 
-    # 3. 检查是否已展示过
-    if name in FULLY_EXPANDED:
-        print(f"{prefix}{connector}{name:<25} {status} (Already shown above)")
+    # 检查是否已展示过
+    if real_name in FULLY_EXPANDED:
+        print(f"{prefix}{connector}{label:<30} {status} (Already shown above)")
         return
 
-    # 打印当前节点
-    print(f"{prefix}{connector}{name:<25} {status}")
+    print(f"{prefix}{connector}{label:<30} {status}")
 
-    # 如果找不到这个包，或者它已经被标记过，我们就不应该去查它的依赖
     if not in_up:
         return
 
-    # 4. 只有存在的包才标记为已展开并查询依赖
-    FULLY_EXPANDED.add(name)
-    current_path.add(name)
+    FULLY_EXPANDED.add(real_name)
+    current_path.add(real_name)
 
-    # 安全地获取依赖
-    formula_info = UPSTREAM_MAP[name]
+    formula_info = UPSTREAM_MAP[real_name]
     deps = get_linux_deps(formula_info)
     
     new_prefix = prefix + ("    " if is_last else "│   ")
@@ -87,24 +107,24 @@ def analyze_deps(name, prefix="", is_last=True, current_path=None):
         analyze_deps(dep, new_prefix, i == len(deps) - 1, current_path.copy())
 
 def main():
-    global UPSTREAM_MAP, DOWNSTREAM_NAMES
     if len(sys.argv) != 2:
         sys.exit("Usage: python3 script.py <package>")
 
-    UPSTREAM_MAP = fetch_api(UPSTREAM_API)
-    DOWNSTREAM_NAMES = set(fetch_api(DOWNSTREAM_API).keys())
+    build_maps()
 
     if not UPSTREAM_MAP:
+        print("[!] Failed to fetch upstream data.")
         return
     
     target = sys.argv[1]
-    print("\nResult Dependency Tree:\n" + "-" * 60)
-    if target not in UPSTREAM_MAP:
-        print(f"[!] Target '{target}' not found in upstream.")
+    real_target = resolve_name(target)
+
+    print("\nResult Dependency Tree:\n" + "-" * 70)
+    if real_target not in UPSTREAM_MAP:
+        print(f"[!] Target '{target}' not found in upstream (even as an alias).")
     else:
-        # 顶层手动调用，模拟根节点
         analyze_deps(target)
-    print("-" * 60)
+    print("-" * 70)
 
 if __name__ == "__main__":
     main()
