@@ -43,5 +43,4 @@ jobs:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
           COMMIT_MSG: ${{ env.COMMIT_MSG }}
         run: |
-          # 传入格式：用户名:分支名
           python3 create-gitcode-pr.py "${{ github.event.inputs.formula_name }}" "${{ vars.GITCODE_USER }}:${{ env.BRANCH_NAME }}"
