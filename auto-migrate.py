@@ -5,9 +5,16 @@ import json
 import subprocess
 import requests
 
-# 配置信息
+env_vars = ["GITCODE_USER", "GITCODE_EMAIL", "GITCODE_TOKEN"]
+for var in env_vars:
+    if not os.getenv(var):
+        sys.exit(f"Error: Environment variable {var} is missing.")
+
+GITCODE_USER = os.getenv("GITCODE_USER")
+GITCODE_EMAIL = os.getenv("GITCODE_EMAIL")
+GITCODE_TOKEN = os.getenv("GITCODE_TOKEN")
 UPSTREAM_API = "https://formulae.brew.sh/api/formula.jws.json"
-GITCODE_REPO = f"https://{os.getenv('GITCODE_USER')}:{os.getenv('GITCODE_TOKEN')}@gitcode.com/{os.getenv('GITCODE_USER')}/homebrew-core.git"
+GITCODE_REPO = f"https://{GITCODE_USER}:{GITCODE_TOKEN}@gitcode.com/{GITCODE_USER}/homebrew-core.git"
 
 def run_cmd(cmd, cwd=None):
     """运行 Shell 命令并返回输出"""
@@ -37,13 +44,12 @@ def fetch_aliases(formula_name):
     return []
 
 def create_pr(head_branch, title):
-    token = os.getenv("GITCODE_TOKEN")
     owner = "Harmonybrew"
     repo = "homebrew-core"
 
     # 构造请求数据
     url = f"https://api.gitcode.com/api/v5/repos/{owner}/{repo}/pulls"
-    params = {"access_token": token}
+    params = {"access_token": GITCODE_TOKEN}
     payload = {
         "title": title,
         "head": head_branch,  # 格式: "username:branch"
@@ -70,13 +76,7 @@ def main():
 
     formula = sys.argv[1]
     
-    # 1. 检查环境变量
-    env_vars = ["GITCODE_USER", "GITCODE_EMAIL", "GITCODE_TOKEN"]
-    for var in env_vars:
-        if not os.getenv(var):
-            sys.exit(f"Error: Environment variable {var} is missing.")
-
-    # 2. 确定路径逻辑
+    # 1. 确定路径逻辑
     tap_path = run_cmd(["brew", "--repository", "harmonybrew/core"])
     os.chdir(tap_path)
 
@@ -85,7 +85,7 @@ def main():
     target_abs_dir = os.path.join(tap_path, target_rel_dir)
     os.makedirs(target_abs_dir, exist_ok=True)
 
-    # 3. 下载 Formula 文件
+    # 2. 下载 Formula 文件
     print(f"[*] Fetching {formula}.rb...")
     upstream_url = f"https://raw.githubusercontent.com/Homebrew/homebrew-core/main/Formula/{first_letter}/{formula}.rb"
     rb_path = os.path.join(target_abs_dir, f"{formula}.rb")
@@ -96,7 +96,7 @@ def main():
     with open(rb_path, "w") as f:
         f.write(resp.text)
 
-    # 4. 创建 Aliases 软链接
+    # 3. 创建 Aliases 软链接
     aliases = fetch_aliases(formula)
     if aliases:
         alias_dir = os.path.join(tap_path, "Aliases")
@@ -111,22 +111,22 @@ def main():
             os.symlink(rel_link_target, alias_path)
             print(f"[*] Created alias: {alias} -> {rel_link_target}")
 
-    # 5. 构建与测试
+    # 4. 构建与测试
     print(f"[*] Installing and testing {formula}...")
     run_cmd(["brew", "install", "-s", "--include-test", formula])
     run_cmd(["brew", "test", formula])
 
-    # 6. 获取版本号用于提交信息
+    # 5. 获取版本号用于提交信息
     info_json = json.loads(run_cmd(["brew", "info", "--json=v2", formula]))
     version = info_json['formulae'][0]['versions']['stable']
     commit_msg = f"{formula} {version} (new formula)"
 
-    # 7. Git 操作
+    # 6. Git 操作
     print(f"[*] Committing and pushing to GitCode...")
     branch_name = f"migrate-{formula}"
     
-    run_cmd(["git", "config", "user.name", os.getenv("GITCODE_USER")])
-    run_cmd(["git", "config", "user.email", os.getenv("GITCODE_EMAIL")])
+    run_cmd(["git", "config", "user.name", GITCODE_USER])
+    run_cmd(["git", "config", "user.email", GITCODE_EMAIL])
     
     # 切换分支
     subprocess.run(["git", "checkout", "-b", branch_name]) # 允许失败（如果分支已存在）
@@ -138,8 +138,8 @@ def main():
     run_cmd(["git", "commit", "-m", commit_msg])
     run_cmd(["git", "push", "-f", GITCODE_REPO, branch_name])
 
-    # 8. 生成 PR
-    create_pr(branch_name, commit_msg)
+    # 7. 生成 PR
+    create_pr(f"{GITCODE_USER}:{branch_name}", commit_msg)
 
     print(f"\n[OK] Successfully migrated {formula}!")
 
