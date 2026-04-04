@@ -30,22 +30,10 @@ jobs:
           python3 -m pip install --upgrade pip
           pip3 install requests
 
-      - name: Build And Push
-        id: build_task
+      - name: Auto Migrate
         env:
           GITCODE_USER: ${{ vars.GITCODE_USER }}
           GITCODE_EMAIL: ${{ vars.GITCODE_EMAIL }}
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
         run: |
-          python3 build-and-push.py "${{ github.event.inputs.formula_name }}"
-          BRANCH=$(cat output.txt | grep "MIGRATION_BRANCH=" | cut -d'=' -f2)
-          MSG=$(cat output.txt | grep "MIGRATION_MSG=" | cut -d'=' -f2)
-          echo "BRANCH_NAME=$BRANCH" >> $GITHUB_ENV
-          echo "COMMIT_MSG=$MSG" >> $GITHUB_ENV
-
-      - name: Submit Pull Request
-        env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-          COMMIT_MSG: ${{ env.COMMIT_MSG }}
-        run: |
-          python3 create-gitcode-pr.py "${{ github.event.inputs.formula_name }}" "${{ vars.GITCODE_USER }}:${{ env.BRANCH_NAME }}"
+          python3 auto-migrate.py "${{ github.event.inputs.formula_name }}"

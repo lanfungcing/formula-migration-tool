@@ -34,6 +34,34 @@ def fetch_aliases(formula_name):
         print(f"[!] Warning: Failed to fetch aliases: {e}")
     return []
 
+def create_pr(head_branch, title):
+    token = os.getenv("GITCODE_TOKEN")
+    owner = "Harmonybrew"
+    repo = "homebrew-core"
+
+    # 构造请求数据
+    url = f"https://api.gitcode.com/api/v5/repos/{owner}/{repo}/pulls"
+    params = {"access_token": token}
+    payload = {
+        "title": title,
+        "head": head_branch,  # 格式: "username:branch"
+        "base": "main",
+        "body": "Automatically migrated by [formula-migration-tool](https://github.com/Harmonybrew/formula-migration-tool).",
+        "prune_source_branch": True,  # 合入后删除源分支
+    }
+
+    try:
+        response = requests.post(url, params=params, json=payload, timeout=30)
+        response.raise_for_status()
+        print(
+            f"[SUCCESS] PR created: https://gitcode.com/Harmonybrew/homebrew-core/pull/{response.json().get('number')}"
+        )
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] Failed to create PR: {e}")
+        if response is not None:
+            print(f"Response: {response.text}")
+        sys.exit(1)
+
 def main():
     if len(sys.argv) < 2:
         sys.exit("Usage: python3 migrate.py <formula>")
@@ -108,11 +136,8 @@ def main():
     run_cmd(["git", "commit", "-m", commit_msg])
     run_cmd(["git", "push", "-f", GITCODE_REPO, branch_name])
 
-    # 8. 写回输出文件 (供后续流程读取)
-    output_file = os.path.join(os.getenv("GITHUB_WORKSPACE", "."), "output.txt")
-    with open(output_file, "a") as f:
-        f.write(f"MIGRATION_BRANCH={branch_name}\n")
-        f.write(f"MIGRATION_MSG={commit_msg}\n")
+    # 8. 生成 PR
+    create_pr(branch_name, commit_msg)
 
     print(f"\n[OK] Successfully migrated {formula}!")
 

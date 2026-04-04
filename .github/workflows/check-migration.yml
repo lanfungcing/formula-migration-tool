@@ -25,4 +25,5 @@ jobs:
           pip install requests
 
       - name: Run Dependency Analysis
-        run: python3 check-migration.py "${{ github.event.inputs.formula_name }}"
+        run: |
+          python3 check-migration.py "${{ github.event.inputs.formula_name }}"
