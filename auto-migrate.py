@@ -16,6 +16,8 @@ def run_cmd(cmd, cwd=None):
     if result.returncode != 0:
         print(f"[!] Error: {result.stderr}")
         sys.exit(result.returncode)
+    print(result.stdout.strip())
+    print(result.stderr.strip())
     return result.stdout.strip()
 
 def fetch_aliases(formula_name):
